@@ -1,0 +1,52 @@
+name: CI
+on:
+push:
+branches: [main]
+pull_request:
+branches: [main]
+
+
+jobs:
+build-test:
+runs-on: ubuntu-latest
+services:
+postgres:
+image: postgres:16
+env:
+POSTGRES_USER: postgres
+POSTGRES_PASSWORD: postgres
+POSTGRES_DB: qc_platform_test
+ports: ["5432:5432"]
+options: >-
+--health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
+steps:
+- uses: actions/checkout@v4
+- uses: yarn/action-setup@v4
+with: { version: 9 }
+- uses: actions/setup-node@v4
+with:
+node-version: 20
+cache: 'yarn'
+- run: yarn install --frozen-lockfile
+- name: Typecheck
+run: yarn typecheck
+- name: Lint
+run: yarn lint
+- name: Build
+run: yarn build
+- name: Run DB migrations (optional for integration tests)
+env:
+DB_HOST: localhost
+DB_PORT: 5432
+DB_USER: postgres
+DB_PASS: postgres
+DB_NAME: qc_platform_test
+DB_SSL: false
+run: yarn migration:run
+- name: Test with coverage
+run: yarn test:cov
+- name: Upload coverage to artifact
+uses: actions/upload-artifact@v4
+with:
+name: coverage-lcov
+path: coverage/lcov.info
