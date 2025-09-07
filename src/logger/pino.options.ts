@@ -1,27 +1,33 @@
 import { Params } from 'nestjs-pino';
 
 const isDev = process.env.NODE_ENV === 'development';
+const hasPretty = (() => {
+  try {
+    // จะ throw ถ้าไม่ได้ติดตั้ง pino-pretty
+    require.resolve('pino-pretty');
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 export const pinoOptions: Params = {
   pinoHttp: {
     level: process.env.PINO_LEVEL || (isDev ? 'debug' : 'info'),
-    transport: isDev
-      ? {
-          target: 'pino-pretty',
-          options: {
-            singleLine: true,
-            translateTime: 'SYS:standard',
-            ignore: 'pid,hostname',
-          },
-        }
-      : undefined,
+    transport:
+      isDev && hasPretty
+        ? {
+            target: 'pino-pretty',
+            options: {
+              singleLine: true,
+              translateTime: 'SYS:standard',
+              ignore: 'pid,hostname',
+            },
+          }
+        : undefined,
 
     messageKey: 'message',
-    customAttributeKeys: {
-      req: 'request',
-      res: 'response',
-      err: 'error',
-    },
+    customAttributeKeys: { req: 'request', res: 'response', err: 'error' },
 
     serializers: {
       req: (req: any) => ({
@@ -34,13 +40,22 @@ export const pinoOptions: Params = {
       res: (res: any) => ({ statusCode: res.statusCode }),
     },
 
-    redact: [
-      'req.headers.authorization',
-      'req.headers.cookie',
-      'res.headers.set-cookie',
-      'req.body.password',
-      'req.body.token',
-    ],
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'request.headers.authorization',
+        'request.headers.cookie',
+
+        // redact ทั้ง object headers แทน
+        'res.headers',
+        'response.headers',
+
+        'req.body.password',
+        'req.body.token',
+      ],
+      censor: '[REDACTED]',
+    },
 
     customProps: (req: any) => {
       const orgId =
@@ -54,11 +69,9 @@ export const pinoOptions: Params = {
       return { reqId: req.reqId, orgId, factoryId, userId };
     },
 
-    // ❗ Fix TS: ensure the predicate returns strictly boolean
     autoLogging: {
+      // ต้องคืนค่า boolean เสมอ
       ignore: (req) => (typeof req.url === 'string' ? req.url.startsWith('/health') : false),
-      // หรือใช้ตัวเลือกนี้ถ้ารุ่น pino-http รองรับ:
-      // ignorePaths: ['/health', '/health/ready'],
     },
 
     customLogLevel: (_req, res, err) => {

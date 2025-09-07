@@ -1,10 +1,12 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+// src/app.module.ts
+import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule } from './config/config.module';
 import { LoggerModule } from './logger/logger.module';
 import { HealthModule } from './health/health.module';
 import { CommonModule } from './common/common.module';
 import { DatabaseModule } from './database/database.module';
 import { VersioningSecurityModule } from './versioning-security/versioning-security.module';
+import { RequestContextModule } from './context/request-context.module';
 import { AlsInitMiddleware } from './context/request-context.middleware';
 
 @Module({
@@ -15,7 +17,9 @@ import { AlsInitMiddleware } from './context/request-context.middleware';
     CommonModule,
     DatabaseModule,
     VersioningSecurityModule,
+    RequestContextModule, // <- สำคัญ
   ],
+  providers: [AlsInitMiddleware], // <- ให้ DI มองเห็น middleware class
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
