@@ -1,17 +1,16 @@
-#!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
+# ห้ามใส่บรรทัด shebang และ husky.sh (ตามคำเตือน)
 
 echo "🔎 pre-push: typecheck + quick tests"
 
-# 1) เช็ค TypeScript ให้ไว (ไม่ build)
+# 1) TypeScript typecheck (ไว และพอตรวจพลาดหยุดทันที)
 yarn typecheck || exit 1
 
-# 2) รันทดสอบแบบเร็ว:
-# - ถ้ามีฐานเทียบ origin/main จะทดสอบเฉพาะที่เปลี่ยน (--changedSince)
-# - ถ้าไม่มี ก็รันทั้งชุดแบบ bail เพื่อตกทันทีที่เจอ fail
+# 2) Quick tests
+#   - เรียก 'yarn jest' โดยตรง (เลี่ยงซ้ำ --config จากสคริปต์ yarn test)
+#   - ใช้ --changedSince ถ้ามี origin/main เพื่อรันทดสอบเฉพาะที่เปลี่ยน
 if git rev-parse --verify origin/main >/dev/null 2>&1; then
   BASE=$(git merge-base HEAD origin/main)
-  yarn test --config jest.config.ts --passWithNoTests --bail --changedSince="$BASE" --maxWorkers=50% || exit 1
+  yarn jest --passWithNoTests --bail --changedSince="$BASE" --maxWorkers=50% || exit 1
 else
-  yarn test --config jest.config.ts --passWithNoTests --bail --maxWorkers=50% || exit 1
+  yarn jest --passWithNoTests --bail --maxWorkers=50% || exit 1
 fi
