@@ -1,52 +1,116 @@
 name: CI
-on:
-push:
-branches: [main]
-pull_request:
-branches: [main]
 
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.svg'
+  pull_request:
+    branches: [main, master]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.svg'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-build-test:
-runs-on: ubuntu-latest
-services:
-postgres:
-image: postgres:16
-env:
-POSTGRES_USER: postgres
-POSTGRES_PASSWORD: postgres
-POSTGRES_DB: qc_platform_test
-ports: ["5432:5432"]
-options: >-
---health-cmd="pg_isready -U postgres" --health-interval=10s --health-timeout=5s --health-retries=5
-steps:
-- uses: actions/checkout@v4
-- uses: yarn/action-setup@v4
-with: { version: 9 }
-- uses: actions/setup-node@v4
-with:
-node-version: 20
-cache: 'yarn'
-- run: yarn install --frozen-lockfile
-- name: Typecheck
-run: yarn typecheck
-- name: Lint
-run: yarn lint
-- name: Build
-run: yarn build
-- name: Run DB migrations (optional for integration tests)
-env:
-DB_HOST: localhost
-DB_PORT: 5432
-DB_USER: postgres
-DB_PASS: postgres
-DB_NAME: qc_platform_test
-DB_SSL: false
-run: yarn migration:run
-- name: Test with coverage
-run: yarn test:cov
-- name: Upload coverage to artifact
-uses: actions/upload-artifact@v4
-with:
-name: coverage-lcov
-path: coverage/lcov.info
+  build-test:
+    name: Lint • Typecheck • Build • Migrate • Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: qc_platform_ci
+        options: >-
+          --health-cmd "pg_isready -U postgres -d qc_platform_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # App
+      NODE_ENV: test
+      PINO_LEVEL: silent
+
+      # Database (match service above)
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASS: postgres
+      DB_NAME: qc_platform_ci
+      DB_SSL: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'yarn'
+
+      - name: Enable corepack (Yarn)
+        run: |
+          corepack enable || true
+          yarn --version
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Install PostgreSQL client (for wait & debug)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d qc_platform_ci; then
+              echo "Postgres is ready"; break; fi; sleep 2; done
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Typecheck
+        run: yarn typecheck
+
+      - name: Build
+        run: yarn build
+
+      - name: Run database migrations
+        run: yarn migration:run
+
+      - name: Unit tests (coverage)
+        run: yarn test:cov --config jest.config.ts
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.sha }}
+          path: |
+            coverage/**
+            coverage.*
+          if-no-files-found: ignore
+
+      - name: Print container logs on failure (Postgres)
+        if: failure()
+        run: docker logs $(docker ps -q --filter name="postgres") || true
