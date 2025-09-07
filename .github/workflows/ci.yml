@@ -2,14 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, develop]
     paths-ignore:
       - '**/*.md'
       - '**/*.png'
       - '**/*.jpg'
       - '**/*.svg'
   pull_request:
-    branches: [main, master]
+    branches: [main, master, develop]
     paths-ignore:
       - '**/*.md'
       - '**/*.png'
@@ -17,12 +17,28 @@ on:
       - '**/*.svg'
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash
+
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  TZ: Asia/Bangkok
+  NODE_ENV: test
+  PINO_LEVEL: silent
+  # Database for TypeORM & tests
+  DB_HOST: 127.0.0.1
+  DB_PORT: 5432
+  DB_USER: postgres
+  DB_PASS: postgres
+  DB_NAME: qc_platform_ci
+  DB_SSL: 'false'
 
 jobs:
   build-test:
@@ -44,30 +60,17 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-    env:
-      # App
-      NODE_ENV: test
-      PINO_LEVEL: silent
-
-      # Database (match service above)
-      DB_HOST: 127.0.0.1
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASS: postgres
-      DB_NAME: qc_platform_ci
-      DB_SSL: 'false'
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node.js 20
+      - name: Setup Node.js 20 (cache Yarn)
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'yarn'
+          cache: yarn
 
-      - name: Enable corepack (Yarn)
+      - name: Enable corepack / show Yarn
         run: |
           corepack enable || true
           yarn --version
@@ -75,16 +78,17 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Install PostgreSQL client (for wait & debug)
+      - name: Print env snapshot
         run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client
+          node -e "console.log({ node: process.version })"
+          echo "DB => $DB_USER@$DB_HOST:$DB_PORT/$DB_NAME"
 
       - name: Wait for Postgres
         run: |
           for i in {1..30}; do
-            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d qc_platform_ci; then
-              echo "Postgres is ready"; break; fi; sleep 2; done
+            pg_isready -h 127.0.0.1 -p 5432 -U postgres -d qc_platform_ci && break
+            sleep 2
+          done
 
       - name: Lint
         run: yarn lint
@@ -99,7 +103,7 @@ jobs:
         run: yarn migration:run
 
       - name: Unit tests (coverage)
-        run: yarn test:cov --config jest.config.ts
+        run: yarn jest --coverage --config jest.config.ts --passWithNoTests --ci --maxWorkers=50%
 
       - name: Upload coverage artifact
         if: always()
@@ -111,6 +115,6 @@ jobs:
             coverage.*
           if-no-files-found: ignore
 
-      - name: Print container logs on failure (Postgres)
+      - name: Print Postgres logs on failure
         if: failure()
         run: docker logs $(docker ps -q --filter name="postgres") || true
